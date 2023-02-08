@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "sinusoidal_gradient_descent"
+version = "1.0.0"
+description = "Sinusoidal Frequency Estimation by Gradient Descent"
+authors = ["Ben Hayes", "Tarepan"]
+readme = "README.md"
+repository = "https://github.com/tarepan/sinusoidal-gradient-descent"
+
+[tool.poetry.dependencies]
+python = "^3.7"
+hydra-core = "^1.2.1"
+pandas = "^1.4.0"
+matplotlib = "^3.5.0"
+lapsolver = "^1.1.0"
+[tool.poetry.dev-dependencies]
+pytest = "^7.1.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pylint.messages_control]
+disable = [
+  "line-too-long",
+]
