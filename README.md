@@ -29,7 +29,7 @@ signal = complex_oscillator(z, N=100, reduce=True)
 matplotlib.pyplot.plot(signal)
 ```
 
-[!surrogate](https://github.com/tarepan/sinusoidal-gradient-descent/tree/main/doc/img/single_surrogate.png)
+![surrogate](/doc/img/single_surrogate.png)
 
 For frequency estimation (fitting toward a signal), you just loop 'synthesize-loss-backward-optimize' (Diff AbS).  
 Runnable demo can be seen in [/estimation.ipynb][estimation_nb_file] [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)][estimation_nb_colab]  
