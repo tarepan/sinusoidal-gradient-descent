@@ -28,14 +28,14 @@ signal = complex_oscillator(z, N=1024, reduce=True)
 ```
 
 For frequency estimation (fitting toward a signal), you just loop 'synthesize-loss-backward-optimize' (Diff AbS).  
-Runnable demo can be seen in `/estimation.ipynb`.  
+Runnable demo can be seen in [/estimation.ipynb][estimation_nb_file] [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)][estimation_nb_colab]  
 
 The experiments in the paper can be run.
 ``` bash
-python -m sinusoidal_gradient_descent.eval.estimator -cn <setup_name>
+python -m sinusoidal_gradient_descent.eval.estimator -cn <conf>
 ```
-`<setup_name>` specify experiment setup.  
-You can use `single` or `multi_[mse|fft]_[2|8|32](_baseline)` (please check `/estimator_config/`).  
+`<conf>` specify an experiment configuration.  
+You can use `single` or `multi_[mse|fft]_[2|8|32](_baseline)` (please check [/estimator_config/](https://github.com/tarepan/sinusoidal-gradient-descent/tree/main/estimator_config)`).  
 
 
 ## Implementation variants
@@ -49,9 +49,11 @@ Implementation variants exist. There are 3 reference implementations which repre
 | directly damped sinusoid | exp(a)     * cos  |      -         | amplitude             |      27.2 ± 0.35 µs      |
 | -                        | cumprod(a) * cos  |      ✅       | amplitude             |           -              |
 
-Tested on an Intel i5 2GHz Quad Core CPU.
-You can check the implementations in `/oscillators.py`.
+Tested on an Intel i5 2GHz Quad Core CPU.  
+You can check the implementations in [/sinusoidal_gradient_descent/oscillators.py](https://github.com/tarepan/sinusoidal-gradient-descent/blob/main/sinusoidal_gradient_descent/oscillators.py).
 
 
 [paper]: https://arxiv.org/abs/2210.14476
+[estimation_nb_file]: https://github.com/tarepan/sinusoidal-gradient-descent/blob/main/estimation.ipynb
+[estimation_nb_colab]: https://colab.research.google.com/github/tarepan/sinusoidal-gradient-descent/blob/main/estimation.ipynb
 <!-- [notebook]: https://colab.research.google.com/github/tarepan/S3PRL_VC/blob/main/s3prlvc.ipynb -->
