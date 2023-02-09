@@ -1,6 +1,6 @@
 import torch
 
-from .oscillator import complex_oscillator_direct, complex_oscillator_cumprod, complex_oscillator_damped
+from .oscillators import complex_oscillator_direct, complex_oscillator_cumprod, complex_oscillator_damped
 
 
 # Configs
