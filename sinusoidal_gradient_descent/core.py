@@ -66,79 +66,12 @@ def estimate_amplitude(z, N, representation="fft"):
     return least_squares_soln
 
 
-def get_reduce_fn(reduce: str):
-    if reduce == "mean":
-        return torch.mean
-    elif reduce == "sum":
-        return torch.sum
-    elif reduce == "none":
-        return lambda x: x
-    else:
-        raise ValueError(f"Invalid reduction method: {reduce}")
-
-
-def fft_loss(
-    pred_signal,
-    target_signal,
-    lin_l1: float = 1.0,
-    lin_l2: float = 0.0,
-    lin_huber: float = 0.0,
-    log_l1: float = 0.0,
-    log_l2: float = 0.0,
-    log_huber: float = 0.0,
-    reduce_freq: str = "mean",
-    reduce_batch: str = "sum",
-    eps: float = 1e-8,
-):
+def fft_loss(pred_signal, target_signal):
     """
-    Args:
-        reduce_freq  - Identifier of reduce function for freq
-        reduce_batch - Identifier of reduce function for batch
+    L2 Loss between FT(pred_signal) and FT(target_signal).
     """
-
-    freq_reduce_fn = get_reduce_fn(reduce_freq)
-    batch_reduce_fn = get_reduce_fn(reduce_batch)
-
-    pred_fft = torch.fft.rfft(pred_signal, norm="ortho").abs()
-    target_fft = torch.fft.rfft(target_signal, norm="ortho").abs()
-    lin_l1 = (
-        lin_l1 * torch.nn.functional.l1_loss(pred_fft, target_fft)
-        if lin_l1 != 0.0
-        else 0.0
+    # original code: weight sum of six [linear|log]x[L1|L2|Huber] losses
+    return torch.nn.functional.mse_loss(
+        torch.fft.rfft(pred_signal,   norm="ortho").abs(),
+        torch.fft.rfft(target_signal, norm="ortho").abs()
     )
-    lin_l2 = (
-        lin_l2 * torch.nn.functional.mse_loss(pred_fft, target_fft)
-        if lin_l2 != 0.0
-        else 0.0
-    )
-    lin_huber = (
-        lin_huber * torch.nn.functional.huber_loss(pred_fft, target_fft)
-        if lin_huber != 0.0
-        else 0.0
-    )
-    log_l1 = (
-        log_l1
-        * torch.nn.functional.l1_loss(
-            torch.log(pred_fft + eps), torch.log(target_fft + eps)
-        )
-        if log_l1 != 0.0
-        else 0.0
-    )
-    log_l2 = (
-        log_l2
-        * torch.nn.functional.mse_loss(
-            torch.log(pred_fft + eps), torch.log(target_fft + eps)
-        )
-        if log_l2 != 0.0
-        else 0.0
-    )
-    log_huber = (
-        log_huber
-        * torch.nn.functional.huber_loss(
-            torch.log(pred_fft + eps), torch.log(target_fft + eps)
-        )
-        if log_huber != 0.0
-        else 0.0
-    )
-
-    return lin_l1 + lin_l2 + lin_huber + log_l1 + log_l2 + log_huber

@@ -323,11 +323,8 @@ def evaluation_loop(
             # /Forward
     
             # Loss-Backward-Optimize
-            loss = hydra.utils.call(
-                loss_cfg,
-                pred_signal,
-                target_signal,
-            )
+            ## L2 loss (torch.nn.functional.mse_loss) | FT-L2 loss (`core.fft_loss`)
+            loss = hydra.utils.call(loss_cfg, pred_signal, target_signal)
             loss.backward()
             # Unused feature, keep alive for future experiments
             if normalise_complex_grads and not use_real_sinusoid_baseline:
