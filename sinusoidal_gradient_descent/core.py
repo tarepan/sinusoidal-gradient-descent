@@ -19,7 +19,6 @@ def complex_oscillator(
     z: torch.ComplexType,
     initial_phase: Optional[torch.ComplexType] = None,
     N: int = 2048,
-    constrain: bool = False,
     reduce: bool = False,
 ):
     """Generates an exponentially decaying sinusoids."""
@@ -27,12 +26,6 @@ def complex_oscillator(
     if initial_phase is None:
         # If no provided, initialized with zero phase.
         initial_phase = torch.ones_like(z)
-    
-    if constrain:
-        # Limit the magnitude of z to 1. Note that tanh is used in lieu of sigmoid to 
-        # avoid vanishing gradients as magnitude approaches zero.
-        mag = torch.abs(z)
-        z = z * torch.tanh(mag) / mag
 
     # 'cumulative product' implementation of the surrogate
     z = z[..., None].expand(*z.shape, N - 1)
@@ -45,18 +38,17 @@ def complex_oscillator(
     return y
 
 
-def estimate_amplitude(z, N, constrain=False, representation="fft"):
+def estimate_amplitude(z, N, representation="fft"):
     """Estimate amplitude of real oscillator from surrogate complex oscillator.
 
     Args:
         z - complex numbers representing complex oscillator
         N - The number of samples
-        constrain - <--deprecated-->
         representation - Estimation based on FFT-MSE or normal MSE
     """
 
     # Source signal
-    V = complex_oscillator(z, N=N, constrain=constrain).sum(dim=-2)
+    V = complex_oscillator(z, N=N).sum(dim=-2)
 
     # Target real oscillator with amplutide 1
     n = torch.arange(N, device=z.device)

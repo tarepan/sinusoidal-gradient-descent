@@ -311,7 +311,6 @@ def evaluation_loop(
                 # Decay sinusoids
                 pred_signal = complex_oscillator(
                     z, initial_phase, target_len,
-                    constrain=False,
                     # afterwards apply global_amp to each partials | single mode has only 1 partial
                     reduce=False if use_global_amp or mode == "single" else True,
                 )
@@ -357,7 +356,7 @@ def evaluation_loop(
             # Amplitude correction
             pred_freq = z.angle().abs()
             # `estimate_amplitude` with `representation`
-            pred_amp = hydra.utils.call(amplitude_estimator_cfg, z[..., None], target_len, constrain=False)[..., 0]
+            pred_amp = hydra.utils.call(amplitude_estimator_cfg, z[..., None], target_len)[..., 0]
             # Global amplitude
             if use_global_amp:
                 pred_amp = pred_amp * saturate_or_id(global_amp)
