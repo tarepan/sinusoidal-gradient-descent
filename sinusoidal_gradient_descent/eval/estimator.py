@@ -249,7 +249,7 @@ def sample_initial_predictions(
 
     return freqs, amps, phases, global_amp
 
-# %% ../../nbs/01_evaluate_estimator.ipynb 6
+
 def evaluation_loop(
     dataloader: torch.utils.data.DataLoader,
     loss_cfg: DictConfig,
@@ -268,7 +268,12 @@ def evaluation_loop(
     seed: int = 0,
 ):
     """Runs the experimental evaluation"""
+
+    saturate_or_id = torch.sigmoid if saturate_global_amp else lambda x:x
+
     for batch in dataloader:
+
+        # Preparation
         target_signal = batch["signal"].float().to(device)
         target_freq = batch["freq"].float().to(device)
         target_amp = batch["amp"].float().to(device)
@@ -277,6 +282,7 @@ def evaluation_loop(
         angle, mag, phase, global_amp = initial_params
 
         true_batch_size = target_signal.shape[0]
+        target_len = target_signal.shape[-1]
         angle = angle[:true_batch_size]
         mag = mag[:true_batch_size]
         phase = phase[:true_batch_size]
@@ -293,100 +299,82 @@ def evaluation_loop(
             optimizer_params = [z] if not use_global_amp else [z, global_amp]
 
         optimizer = hydra.utils.instantiate(optimizer_cfg, optimizer_params)
+        # /Preparation
 
+        # DiffAbS loop
         for step in range(n_steps):
+            # Forward
             optimizer.zero_grad()
-
             if use_real_sinusoid_baseline:
-                pred_signal = real_oscillator(
-                    angle,
-                    mag,
-                    phase,
-                    N=target_signal.shape[-1],
-                ).sum(dim=-2)
+                pred_signal = real_oscillator(angle, mag, phase, target_len).sum(dim=-2)
             else:
+                # Decay sinusoids
                 pred_signal = complex_oscillator(
-                    z,
-                    initial_phase,
-                    N=target_signal.shape[-1],
+                    z, initial_phase, target_len,
                     constrain=False,
+                    # afterwards apply global_amp to each partials | single mode has only 1 partial
                     reduce=False if use_global_amp or mode == "single" else True,
                 )
-
+                # Amplitudes
                 if use_global_amp:
-                    pred_signal = (
-                        pred_signal
-                        * (
-                            torch.sigmoid(global_amp)
-                            if saturate_global_amp
-                            else global_amp
-                        )[..., None]
-                    )
+                    pred_signal = pred_signal * saturate_or_id(global_amp)[..., None]
                     if mode == "multi":
+                        # sum all partials
                         pred_signal = pred_signal.sum(dim=-2)
-
+            # /Forward
+    
+            # Loss-Backward-Optimize
             loss = hydra.utils.call(
                 loss_cfg,
                 pred_signal,
                 target_signal,
             )
             loss.backward()
-
             if normalise_complex_grads and not use_real_sinusoid_baseline:
                 z.grad = z.grad / torch.clamp(z.grad.abs(), min=1e-10)
-
             optimizer.step()
+            # /Loss-Backward-Optimize
 
+            # Logging
             with torch.no_grad():
                 if step % log_interval == 0:
                     print(f"Step {step}: {loss.item()}")
                     if not use_real_sinusoid_baseline:
                         if mode == "multi":
-                            freq_error = np.mean(
-                                min_lap_cost(
-                                    z.angle().abs() / (2 * math.pi),
-                                    target_freq.abs(),
-                                    True,
-                                )
-                            )
-                        else:
-                            freq_error = torch.pow(
-                                z.angle().abs() / (2 * math.pi) - target_freq.abs(), 2
-                            ).mean()
+                            freq_error = np.mean(min_lap_cost(z.angle().abs() / (2 * math.pi), target_freq.abs(), True))
+                        else: # mode == single
+                            freq_error = torch.pow(z.angle().abs() / (2 * math.pi) - target_freq.abs(), 2).mean()
                         print(f"Freq error: {freq_error.tolist()}")
+            # /Logging
 
+        # /DiffAbS loop
+
+        # Surrogate-to-Sinusoid
+        ## Parameter correction
         if use_real_sinusoid_baseline:
-            pred_freq = angle
-            pred_amp = mag
+            pred_freq, pred_amp = angle, mag
         else:
+            # Amplitude correction
             pred_freq = z.angle().abs()
-            pred_amp = hydra.utils.call(
-                amplitude_estimator_cfg,
-                z[..., None],
-                target_signal.shape[-1],
-                constrain=False,
-            )[..., 0]
+            # `estimate_amplitude` with `representation`
+            pred_amp = hydra.utils.call(amplitude_estimator_cfg, z[..., None], target_len, constrain=False)[..., 0]
+            # Global amplitude
             if use_global_amp:
-                pred_amp = pred_amp * (
-                    torch.sigmoid(global_amp) if saturate_global_amp else global_amp
-                )
+                pred_amp = pred_amp * saturate_or_id(global_amp)
+        ## Signal generation with corrected parameters
+        pred_signal = real_oscillator(pred_freq, pred_amp, phase, target_len).sum(dim=-2)
+        # /Surrogate-to-Sinusoid
 
-        pred_signal = real_oscillator(
-            pred_freq, pred_amp, phase, N=target_signal.shape[-1]
-        ).sum(dim=-2)
-
+        # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate
         metrics = hydra.utils.call(
             metric_fn_cfg,
-            target_signal.detach(),
-            target_freq.detach(),
-            target_amp.detach(),
+            target_signal.detach(), target_freq.detach(),               target_amp.detach(),
             target_snr.detach(),
-            pred_signal.detach(),
-            pred_freq.detach() / (2 * math.pi),
-            pred_amp.detach(),
+            pred_signal.detach(),   pred_freq.detach() / (2 * math.pi), pred_amp.detach(),
         )
-        metrics["seed"] = seed
+        # /Evaluation
 
+        metrics["seed"] = seed
         df = pd.DataFrame(metrics)
     return df
 
