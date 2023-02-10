@@ -19,23 +19,63 @@ from sinusoidal_gradient_descent.core import (
 from .metrics import min_lap_cost
 
 
+def sample_equally_devided(low_high: Tuple[float], sample_idx: int, n_division: int):
+    """Sample a value from a equally devided range with index.
+    
+    Args:
+    low_high - Lowest and Highest value of the sampling range
+    sample_idx - Sampling index starting from 0
+    n_division - The number of range division
+    """
+    return low_high[0] + (low_high[1] - low_high[0]) * sample_idx / (n_division - 1)
+
+
+def sample_from_range(low_high: Tuple[float], shape: Tuple[int]) -> torch.Tensor:
+    """Sample a random tensor from within the range.
+
+    Args:
+        low_high - Lowest and Highest value of the sampling range
+        shape - Sampled tensor shape
+    """
+    return torch.rand(*shape) * (low_high[1] - low_high[0]) + low_high[0]
+
+
 class SinusoidEvaluationDataset(torch.utils.data.Dataset):
     """Sinusoids with white Gaussian noise."""
 
     def __init__(
         self,
-        signal_length: int = 4096,
-        freq_range: Tuple[float] = (0.0, 0.5),
-        amp_range: Tuple[float] = (0.0, 1.0),
+        signal_length: int,
+        n_components: int = 1,
+        freq_range:  Tuple[float] = (0.0, 0.5),
+        amp_range:   Tuple[float] = (0.0, 1.0),
         phase_range: Tuple[float] = (0.0, 2 * math.pi),
-        snr_range: Tuple[float] = (0.0, 30.0),
-        n_freqs: int = 100,
-        n_amps: int = 100,
+        snr_range:   Tuple[float] = (0.0, 30.0),
+        n_freqs:  int = 100,
+        n_amps:   int = 100,
         n_phases: int = 100,
         n_snrs: int = 7,
         evaluate_phase: bool = False,
         initial_phase: float = 0.0,
     ):
+        """
+        Args:
+            signal_length - Length of a signal
+            n_components - The |K|, the number of sinusoidal components in a signal
+            freq_range  - Lowest/Highest value of frequency
+            amp_range   - Lowest/Highest value of amplitude
+            phase_range - Lowest/Highest value of phase
+            snr_range   - Lowest/Highest value of snr
+            n_freqs  - The number of equally-devided frequencies in a dataset
+            n_amps   - The number of equally-devided amplitudes  in a dataset
+            n_phases - The number of equally-devided phases      in a dataset
+            n_snrs   - The number of equally-devided noise level toward a signal
+            evaluate_phase
+            initial_phase
+        """
+
+        assert n_components == 1, "Single dataset should be K==1."
+
         # Just save as fields
         self.signal_length = signal_length
         self.freq_range = freq_range
@@ -54,6 +94,7 @@ class SinusoidEvaluationDataset(torch.utils.data.Dataset):
             self.n_phases = 1
 
     def __len__(self):
+        # 'frequency variation' * 'amplitude variation' * 'phase variation' * 'noise variation'
         return self.n_freqs * self.n_amps * self.n_phases * self.n_snrs
 
     def __getitem__(self, idx):
@@ -68,49 +109,29 @@ class SinusoidEvaluationDataset(torch.utils.data.Dataset):
                 noise_stdev -
         """
 
+        # Indexes
+        freq_idx = idx % self.n_freqs
+        amp_idx = (idx // self.n_freqs) % self.n_amps
+        snr_idx = (idx // (self.n_freqs * self.n_amps)) % self.n_snrs
         if self.evaluate_phase:
-            freq_idx = idx % self.n_freqs
-            amp_idx = (idx // self.n_freqs) % self.n_amps
-            snr_idx = (idx // (self.n_freqs * self.n_amps)) % self.n_snrs
             print(snr_idx)
             phase_idx = (idx // (self.n_freqs * self.n_amps * self.n_snrs)) % self.n_phases
-        else:
-            freq_idx = idx % self.n_freqs
-            amp_idx = (idx // self.n_freqs) % self.n_amps
-            snr_idx = (idx // (self.n_freqs * self.n_amps)) % self.n_snrs
 
-        freq = (
-            self.freq_range[0] + (self.freq_range[1] - self.freq_range[0]) * freq_idx / (self.n_freqs - 1)
-            if self.n_freqs > 1
-            else self.freq_range[0]
+        # Parameter sampling
+        freq = sample_equally_devided(self.freq_range, freq_idx, self.n_freqs) if self.n_freqs > 1 else self.freq_range[0]
+        amp  = sample_equally_devided(self.amp_range,  amp_idx,  self.n_amps)  if self.n_amps  > 1 else self.amp_range[0]
+        phase = self.initial_phase + (
+            (sample_equally_devided(self.phase_range, phase_idx, self.n_phases) if self.n_phases > 1 else self.phase_range[0]) if self.evaluate_phase else 0.0
         )
-        amp = (
-            self.amp_range[0]  + (self.amp_range[1]  - self.amp_range[0])  * amp_idx  / (self.n_amps - 1)
-            if self.n_amps > 1
-            else self.amp_range[0]
-        )
-        phase = (
-            (
-                self.initial_phase + self.phase_range[0] + (self.phase_range[1] - self.phase_range[0]) * phase_idx / (self.n_phases - 1)
-                if self.n_phases > 1
-                else self.phase_range[0]
-            )
-            if self.evaluate_phase
-            else self.initial_phase
-        )
-
-        # White noise
-        snr = self.snr_range[0] + (self.snr_range[1] - self.snr_range[0]) * snr_idx / (
-            self.n_snrs - 1
-        ) if self.n_snrs > 1 else self.snr_range[0]
-        # noise_stdev = amp / (10 ** (snr / 20))
+        ## White noise
+        snr = sample_equally_devided(self.snr_range, snr_idx, self.n_snrs) if self.n_snrs > 1 else self.snr_range[0]
         snr_linear = 10 ** (snr / 10)
         noise_stdev = amp / ((2 * snr_linear) ** 0.5)
-        noise = torch.randn(self.signal_length) * noise_stdev
+        white_noise = torch.randn(self.signal_length) * noise_stdev
 
-        # Oscillator
+        # Signal generation
         n = torch.arange(self.signal_length)
-        y = amp * torch.cos(2 * math.pi * freq * n + phase) + noise
+        y = white_noise + amp * torch.cos(2 * math.pi * freq * n + phase)
 
         return dict(signal=y, freq=freq, amp=amp, phase=phase, snr=snr, noise_stdev=noise_stdev)
 
@@ -119,8 +140,8 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
     """Mixtures of sinusoids."""
     def __init__(
         self,
-        signal_length: int = 4096,
-        n_components: int = 4,
+        signal_length: int,
+        n_components: int,
         freq_range: Tuple[float] = (0.0,  0.5),
         amp_range:  Tuple[float] = (0.0,  1.0),
         snr_range:  Tuple[float] = (0.0, 30.0),
@@ -130,23 +151,40 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
         dataset_seed: int = 0,
         enable_noise: bool = True,
     ):
+        """
+        Args:
+            signal_length - Length of a signal
+            n_components - The |K|, the number of sinusoidal components in a signal
+            freq_range  - Lowest/Highest value of frequency
+            amp_range   - Lowest/Highest value of amplitude
+            snr_range   - Lowest/Highest value of snr
+            n_samples - The number of clean multi-signals (cases)
+            n_snrs - The number of equally-devided noise level toward a signal (e.g. `3` means '0 dB & 15 dB & 30 dB')
+            initial_phase - Initial phase
+            dataset_seed - Random sampling seed
+            enable_noise - Whether to add white noise
+        """
         self.signal_length = signal_length
-        self.n_components = n_components
-        self.freq_range = freq_range
-        self.amp_range = amp_range
         self.snr_range = snr_range
         self.n_samples = n_samples
         self.n_snrs = n_snrs
         self.initial_phase = initial_phase
         self.enable_noise = enable_noise
 
+        # Sampling
         with torch.random.fork_rng():
             torch.random.manual_seed(dataset_seed)
-            self.freqs = torch.rand(n_samples, n_components) * (freq_range[1] - freq_range[0]) + freq_range[0]
-            self.amps =  torch.rand(n_samples, n_components) * ( amp_range[1] -  amp_range[0]) +  amp_range[0]
-            self.amps = self.amps / self.amps.sum(dim=1, keepdim=True) 
+            shape = (n_samples, n_components)
+
+            # freqs :: Tensor[N, K] - ~ U[freq_range]
+            self.freqs =  sample_from_range(freq_range, shape)
+
+            unnorm_amps = sample_from_range(amp_range,  shape)
+            # amps :: Tensor[N, K] - ~ U[amp_range], then normalized to total 1 in each signals
+            self.amps = unnorm_amps / unnorm_amps.sum(dim=1, keepdim=True) 
 
     def __len__(self):
+        # 'clean signals' * 'variation of noise level'
         return self.n_samples * self.n_snrs
 
     def __getitem__(self, idx):
@@ -161,25 +199,28 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
                 snr -
                 noise_stdev -
         """
-        sample_idx = idx % self.n_samples
-        snr_idx = idx // self.n_samples
 
+        # Indexes
+        sample_idx = idx %  self.n_samples
+        snr_idx    = idx // self.n_samples
+
+        # Query
+        ## freq :: Tensor[K]
         freq = self.freqs[sample_idx]
+        ## amp  :: Tensor[K]
         amp =   self.amps[sample_idx]
 
-        # White noise or Silent
-        snr = (
-            self.snr_range[0] + (self.snr_range[1] - self.snr_range[0]) * snr_idx / (self.n_snrs - 1)
-            if self.n_snrs > 1
-            else self.snr_range[0]
-        )
+        # Parameter sampling
+        ## White noise or Silent
+        ### only one noise level, so it is lowest one in the range (basically it is 0)
+        snr = sample_equally_devided(self.snr_range, snr_idx, self.n_snrs) if self.n_snrs > 1 else self.snr_range[0]
         snr_linear = 10 ** (snr / 10)
         noise_stdev = amp.sum() / ((2 * snr_linear) ** 0.5)
         noise_or_silent = torch.randn(self.signal_length) * noise_stdev if self.enable_noise else torch.zeros(self.signal_length)
 
-        # Oscillator
+        # Signal generation
         n = torch.arange(self.signal_length)
-        ys = amp[..., None] * torch.cos(2 * math.pi * freq[..., None] * n[..., None, :] + self.initial_phase) + noise_or_silent
+        ys = noise_or_silent + amp[..., None] * torch.cos(2 * math.pi * freq[..., None] * n[..., None, :] + self.initial_phase)
         y = ys.sum(dim=0)
 
         return dict(signal=y, freq=freq, amp=amp, snr=snr, noise_stdev=noise_stdev)
@@ -200,25 +241,23 @@ def sample_initial_predictions(
     """Samples initial parameters for sinusoidal frequency estimation.
 
     Outputs:
-        freqs - randomized
-        amps - randomized
-        phases - based on specifier argument
-        global_amp - determined by the number of sinusoids.
+        freqs - Random sampling from within the range
+        amps - Random sampling from within the range
+        phases - Based on specifier argument
+        global_amp - 1/|K|, equal between components and sum to 1
     """
 
+    # Shape of 4 params : (n_batch, n_components) | (n_components,)
     shape = (batch_size, n_sinusoids) if (batch_size is not None and all_random_in_batch) else (n_sinusoids,)
 
+    # Sampling
     with torch.random.fork_rng():
+        # Rules are described above.
         torch.manual_seed(seed)
-        # freqs : 2π * (rand * (range[1] - range[0]) + range[0])
-        freqs = 2 * math.pi * (torch.rand(*shape, device=device) * (freq_range[1] - freq_range[0]) + freq_range[0])
-        # amps :        rand * (range[1] - range[0]) + range[0]
-        amps =                 torch.rand(*shape, device=device) * ( amp_range[1] -  amp_range[0]) +  amp_range[0]
-        # phases: Torch-nize
-        phases     = torch.ones(*shape, device=device) * initial_phase
-        # global_amp: equally devided, sum to 1.0
+        freqs = 2 * math.pi * sample_from_range(freq_range, shape).to(device)
+        amps = sample_from_range(amp_range, shape).to(device)
+        phases = torch.ones(*shape, device=device) * initial_phase
         global_amp = torch.ones(*shape, device=device) / n_sinusoids
-
         if invert_sigmoid:
             # Invert sigmoid so initialisation is in desired range:
             global_amp = torch.log(global_amp / (1 - global_amp))
