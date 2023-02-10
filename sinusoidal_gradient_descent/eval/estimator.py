@@ -255,7 +255,7 @@ def sample_initial_predictions(
     freq_range: Tuple[float],          # The range of possible frequencies
     amp_range: Tuple[float],           # The range of possible amplitudes
     initial_phase: float,              # The initial phase of the sinusoids
-    invert_sigmoid: bool = False,      # Whether to invert the sigmoid function when sampling the amplitudes
+    invert_sigmoid: bool = False,      # Whether to use `global_amp` as `logit(a_k)`, enabling [0, 1]-bounded a_k with `sigmoid(global_amp)`
     batch_size: Optional[int] = None,  # The batch size of initial predictions
     all_random_in_batch: bool = False, # If true, all predictions in a batch will be sampled randomly. If false, one randomly sampled prediction will be repeated across the batch dimension.
     seed: int = 0,                     # The random seed
@@ -283,8 +283,7 @@ def sample_initial_predictions(
         phases = torch.ones(*shape, device=device) * initial_phase
         global_amp = torch.ones(*shape, device=device) / n_sinusoids
         if invert_sigmoid:
-            # Invert sigmoid so initialisation is in desired range:
-            global_amp = torch.log(global_amp / (1 - global_amp))
+            global_amp = torch.special.logit(global_amp)
 
     if batch_size is not None and not all_random_in_batch:
         freqs      =      freqs.unsqueeze(0).repeat(batch_size, 1)
@@ -321,12 +320,12 @@ def evaluation_loop(
     """Runs the experimental evaluation
     
     Args:
+        saturate_global_amp - Whether to use `global_amp` as `logit(a_k)`, enabling [0, 1]-bounded a_k with `sigmoid(global_amp)`
         normalise_complex_grads - Unused feature (always `False`), but keep alive for future experiments
     """
 
-    # (maybe) Purpose:
-    #   1. Avoid negative amplitude
-    #   2. Avoid too big amplitude, for the experiment in the paper. In the experiment, a reference signal's amplitude α_k is always <1.
+    # Purpose: Keep in [0, 1]
+    # This is not general way, but it is correct for the paper's experiment because a reference signal's amplitude α_k is always <1.
     saturate_or_id = torch.sigmoid if saturate_global_amp else lambda x:x
 
     for batch in dataloader:
@@ -407,7 +406,7 @@ def evaluation_loop(
                     if not use_real_sinusoid_baseline:
                         print(f"Step {step}, ω & α")
                         print(z.angle().abs())
-                        print(global_amp)
+                        print(saturate_or_id(global_amp))
 
             # /Logging
         # /DiffAbS loop

@@ -8,4 +8,4 @@ flatten: false
 
 all_random_in_batch: true
 
-invert_sigmoid: true
+invert_sigmoid: true # Should be linked with `evaluation.saturate_global_amp`
