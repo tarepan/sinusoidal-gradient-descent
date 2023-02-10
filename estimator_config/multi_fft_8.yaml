@@ -11,6 +11,10 @@ defaults:
 param_sampler:
   n_sinusoids: 8
 
+
+
+
+
 dataset:
   n_components: 8
 
