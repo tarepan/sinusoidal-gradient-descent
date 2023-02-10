@@ -237,7 +237,6 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
 
         # Parameter sampling
         ## White noise or Silent
-        ### only one noise level, so it is lowest one in the range (basically it is 0)
         snr = sample_equally_devided(self.snr_range, snr_idx, self.n_snrs)
         snr_linear = 10 ** (snr / 10)
         noise_stdev = amp.sum() / ((2 * snr_linear) ** 0.5)
@@ -325,6 +324,9 @@ def evaluation_loop(
         normalise_complex_grads - Unused feature (always `False`), but keep alive for future experiments
     """
 
+    # (maybe) Purpose:
+    #   1. Avoid negative amplitude
+    #   2. Avoid too big amplitude, for the experiment in the paper. In the experiment, a reference signal's amplitude α_k is always <1.
     saturate_or_id = torch.sigmoid if saturate_global_amp else lambda x:x
 
     for batch in dataloader:
@@ -379,7 +381,7 @@ def evaluation_loop(
                         # sum all partials
                         pred_signal = pred_signal.sum(dim=-2)
             # /Forward
-    
+
             # Loss-Backward-Optimize
             ## L2 loss (torch.nn.functional.mse_loss) | FT-L2 loss (`core.fft_loss`)
             loss = hydra.utils.call(loss_cfg, pred_signal, target_signal)
@@ -400,6 +402,13 @@ def evaluation_loop(
                         else: # mode == single
                             freq_error = torch.pow(z.angle().abs() / (2 * math.pi) - target_freq.abs(), 2).mean()
                         print(f"Freq error: {freq_error.tolist()}")
+                # TODO: For debug
+                if step % 100 == 0:
+                    if not use_real_sinusoid_baseline:
+                        print(f"Step {step}, ω & α")
+                        print(z.angle().abs())
+                        print(global_amp)
+
             # /Logging
         # /DiffAbS loop
 
@@ -408,11 +417,10 @@ def evaluation_loop(
         if use_real_sinusoid_baseline:
             pred_freq, pred_amp = angle, mag
         else:
-            # Amplitude correction
+            # Frequency extraction
             pred_freq = z.angle().abs()
-            # `estimate_amplitude` with `representation`
+            # Amplitude correction
             pred_amp = hydra.utils.call(amplitude_estimator_cfg, z[..., None], target_len)[..., 0]
-            # Global amplitude
             if use_global_amp:
                 pred_amp = pred_amp * saturate_or_id(global_amp)
         ## Signal generation with corrected parameters
