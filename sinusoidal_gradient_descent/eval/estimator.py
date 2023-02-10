@@ -21,13 +21,25 @@ from .metrics import min_lap_cost
 
 def sample_equally_devided(low_high: Tuple[float], sample_idx: int, n_division: int):
     """Sample a value from a equally devided range with index.
-    
+
+    If `lowest != highest` but `n_division == 1`, use lowest value as a output.
+
     Args:
     low_high - Lowest and Highest value of the sampling range
     sample_idx - Sampling index starting from 0
     n_division - The number of range division
     """
-    return low_high[0] + (low_high[1] - low_high[0]) * sample_idx / (n_division - 1)
+
+    if n_division == 1:
+        return low_high[0]
+    else:
+        return low_high[0] + (low_high[1] - low_high[0]) * sample_idx / (n_division - 1)
+
+
+def test_sample_equally_devided():
+    assert sample_equally_devided([0.0, 1.0], 1, 3) == 0.5
+    assert sample_equally_devided([0.0, 1.0], 1, 1) == 0.0
+    print("done 'test_sample_equally_devided'")
 
 
 def sample_from_range(low_high: Tuple[float], shape: Tuple[int]) -> torch.Tensor:
@@ -118,13 +130,11 @@ class SinusoidEvaluationDataset(torch.utils.data.Dataset):
             phase_idx = (idx // (self.n_freqs * self.n_amps * self.n_snrs)) % self.n_phases
 
         # Parameter sampling
-        freq = sample_equally_devided(self.freq_range, freq_idx, self.n_freqs) if self.n_freqs > 1 else self.freq_range[0]
-        amp  = sample_equally_devided(self.amp_range,  amp_idx,  self.n_amps)  if self.n_amps  > 1 else self.amp_range[0]
-        phase = self.initial_phase + (
-            (sample_equally_devided(self.phase_range, phase_idx, self.n_phases) if self.n_phases > 1 else self.phase_range[0]) if self.evaluate_phase else 0.0
-        )
+        freq = sample_equally_devided(self.freq_range, freq_idx, self.n_freqs)
+        amp  = sample_equally_devided(self.amp_range,  amp_idx,  self.n_amps)
+        phase = self.initial_phase + (sample_equally_devided(self.phase_range, phase_idx, self.n_phases) if self.evaluate_phase else 0.0)
         ## White noise
-        snr = sample_equally_devided(self.snr_range, snr_idx, self.n_snrs) if self.n_snrs > 1 else self.snr_range[0]
+        snr = sample_equally_devided(self.snr_range, snr_idx, self.n_snrs)
         snr_linear = 10 ** (snr / 10)
         noise_stdev = amp / ((2 * snr_linear) ** 0.5)
         white_noise = torch.randn(self.signal_length) * noise_stdev
@@ -213,7 +223,7 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
         # Parameter sampling
         ## White noise or Silent
         ### only one noise level, so it is lowest one in the range (basically it is 0)
-        snr = sample_equally_devided(self.snr_range, snr_idx, self.n_snrs) if self.n_snrs > 1 else self.snr_range[0]
+        snr = sample_equally_devided(self.snr_range, snr_idx, self.n_snrs)
         snr_linear = 10 ** (snr / 10)
         noise_stdev = amp.sum() / ((2 * snr_linear) ** 0.5)
         noise_or_silent = torch.randn(self.signal_length) * noise_stdev if self.enable_noise else torch.zeros(self.signal_length)
