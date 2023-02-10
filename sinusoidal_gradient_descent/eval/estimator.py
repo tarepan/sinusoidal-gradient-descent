@@ -53,22 +53,25 @@ def sample_from_range(low_high: Tuple[float], shape: Tuple[int]) -> torch.Tensor
 
 
 class SinusoidEvaluationDataset(torch.utils.data.Dataset):
-    """Sinusoids with white Gaussian noise."""
+    """Single sinusoids."""
 
     def __init__(
         self,
         signal_length: int,
-        n_components: int = 1,
-        freq_range:  Tuple[float] = (0.0, 0.5),
-        amp_range:   Tuple[float] = (0.0, 1.0),
-        phase_range: Tuple[float] = (0.0, 2 * math.pi),
+        n_components: int,
+        freq_range:  Tuple[float] = (0.0,  0.5),
+        amp_range:   Tuple[float] = (0.0,  1.0),
+        phase_range: Tuple[float] = (0.0,  2 * math.pi),
         snr_range:   Tuple[float] = (0.0, 30.0),
+        n_samples: int = 100,
         n_freqs:  int = 100,
         n_amps:   int = 100,
         n_phases: int = 100,
         n_snrs: int = 7,
         evaluate_phase: bool = False,
         initial_phase: float = 0.0,
+        dataset_seed: int = 0,
+        enable_noise: bool = True,
     ):
         """
         Args:
@@ -78,12 +81,15 @@ class SinusoidEvaluationDataset(torch.utils.data.Dataset):
             amp_range   - Lowest/Highest value of amplitude
             phase_range - Lowest/Highest value of phase
             snr_range   - Lowest/Highest value of snr
-            n_freqs  - The number of equally-devided frequencies in a dataset
-            n_amps   - The number of equally-devided amplitudes  in a dataset
-            n_phases - The number of equally-devided phases      in a dataset
-            n_snrs   - The number of equally-devided noise level toward a signal
+            n_samples - The number of samples (signals)           in a dataset
+            n_freqs   - The number of equally-devided frequencies in a dataset
+            n_amps    - The number of equally-devided amplitudes  in a dataset
+            n_phases  - The number of equally-devided phases      in a dataset
+            n_snrs    - The number of equally-devided noise level toward a signal
             evaluate_phase
             initial_phase
+            dataset_seed - Random sampling seed
+            enable_noise - Whether to add white noise
         """
 
         assert n_components == 1, "Single dataset should be K==1."
@@ -152,11 +158,16 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
         self,
         signal_length: int,
         n_components: int,
-        freq_range: Tuple[float] = (0.0,  0.5),
-        amp_range:  Tuple[float] = (0.0,  1.0),
-        snr_range:  Tuple[float] = (0.0, 30.0),
+        freq_range:  Tuple[float] = (0.0,  0.5),
+        amp_range:   Tuple[float] = (0.0,  1.0),
+        phase_range: Tuple[float] = (0.0,  2 * math.pi),
+        snr_range:   Tuple[float] = (0.0, 30.0),
         n_samples: int = 100,
+        n_freqs:  int = 100,
+        n_amps:   int = 100,
+        n_phases: int = 100,
         n_snrs: int = 7,
+        evaluate_phase: bool = False,
         initial_phase: float = 0.0,
         dataset_seed: int = 0,
         enable_noise: bool = True,
@@ -167,13 +178,19 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
             n_components - The |K|, the number of sinusoidal components in a signal
             freq_range  - Lowest/Highest value of frequency
             amp_range   - Lowest/Highest value of amplitude
+            phase_range - Lowest/Highest value of phase
             snr_range   - Lowest/Highest value of snr
-            n_samples - The number of clean multi-signals (cases)
-            n_snrs - The number of equally-devided noise level toward a signal (e.g. `3` means '0 dB & 15 dB & 30 dB')
-            initial_phase - Initial phase
+            n_samples - The number of clean signals (w/o noise)   in a dataset
+            n_freqs   - The number of equally-devided frequencies in a dataset
+            n_amps    - The number of equally-devided amplitudes  in a dataset
+            n_phases  - The number of equally-devided phases      in a dataset
+            n_snrs    - The number of equally-devided noise level toward a signal
+            evaluate_phase
+            initial_phase
             dataset_seed - Random sampling seed
             enable_noise - Whether to add white noise
         """
+
         self.signal_length = signal_length
         self.snr_range = snr_range
         self.n_samples = n_samples
@@ -185,12 +202,10 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
         with torch.random.fork_rng():
             torch.random.manual_seed(dataset_seed)
             shape = (n_samples, n_components)
-
-            # freqs :: Tensor[N, K] - ~ U[freq_range]
+            ## freqs :: Tensor[N, K] - ~ U[freq_range]
             self.freqs =  sample_from_range(freq_range, shape)
-
+            ## amps :: Tensor[N, K] - ~ U[amp_range], then normalized to total 1 in each signals
             unnorm_amps = sample_from_range(amp_range,  shape)
-            # amps :: Tensor[N, K] - ~ U[amp_range], then normalized to total 1 in each signals
             self.amps = unnorm_amps / unnorm_amps.sum(dim=1, keepdim=True) 
 
     def __len__(self):

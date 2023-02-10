@@ -1,13 +1,17 @@
 _target_: sinusoidal_gradient_descent.eval.estimator.MultiSinusoidEvaluationDataset
 
+# (same as paper)
 signal_length: 4096
-n_components: 4
-freq_range: [0.05, 0.45]
+
+# Estimate frequency from [0.1π, 0.9π] and amplitude from [0.1, 1] without noise (same as the paper)
+freq_range: [0.05, 0.45] # maybe for exact '2π' handling
 amp_range: [0.1, 1.0]
-
-n_snrs: 1
 enable_noise: false
-
-n_samples: 2000
-
 initial_phase: 0.0
+
+
+n_components: 4 # will be overriden by experiment config
+
+# 2000 cases per trial (same as the paper)
+n_samples: 2000
+n_snrs: 1

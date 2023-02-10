@@ -8,6 +8,12 @@ defaults:
   - evaluation: single
   - param_sampler: single
 
+
+
+
+dataset:
+  n_components: 1
+
 batch_size: 16
 device: cpu
 n_steps: 50001

@@ -1,15 +1,18 @@
 _target_: sinusoidal_gradient_descent.eval.estimator.SinusoidEvaluationDataset
 
-freq_range: [0.05, 0.45]
+# (same as paper)
+signal_length: 4096
+
+# Estimate only frequency from [0.1π, 0.9π] with snr [0 dB, 40 dB] (same as the paper)
+freq_range: [0.05, 0.45] # maybe for exact '2π' handling
 amp_range: [1.0, 1.0]
 snr_range: [0.0, 40.0]
+initial_phase: 0.0
+# start at pi / 2 radians
+evaluate_phase: false
+n_components: 1
 
+# 2000 cases per trial (same as the paper)
 n_freqs: 100
 n_amps: 1
 n_snrs: 20
-
-evaluate_phase: false
-signal_length: 4096
-
-# start at pi / 2 radians
-initial_phase: 0.0
