@@ -482,3 +482,7 @@ def run(cfg: DictConfig) -> None:
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         metric_df.to_csv(cfg.output_file, index=False)
+
+if __name__ == "__main__":
+    # use hydra
+    run()
