@@ -286,6 +286,7 @@ def sample_initial_predictions(
             global_amp = torch.special.logit(global_amp)
 
     if batch_size is not None and not all_random_in_batch:
+        # Tensor[K,] -> Tensor[1, K] -> Tensor[N, K]
         freqs      =      freqs.unsqueeze(0).repeat(batch_size, 1)
         amps       =       amps.unsqueeze(0).repeat(batch_size, 1)
         phases     =     phases.unsqueeze(0).repeat(batch_size, 1)
@@ -339,7 +340,7 @@ def evaluation_loop(
         target_snr    = batch["snr"   ].float()
         target_len    = target_signal.shape[-1]
 
-        ## InitParam: Adjust size
+        ## InitParam: Adjust size (B, K) -> (B', K)
         angle, mag, phase, global_amp = initial_params
         batch_size = target_signal.shape[0]
         angle      =      angle[:batch_size]
@@ -348,16 +349,23 @@ def evaluation_loop(
         global_amp = global_amp[:batch_size]
 
         ## Param: `angle` & `mag` for real oscillator | `z` & `global_amp` for multi complex oscillator
+        optimizer_params = []
         if use_real_sinusoid_baseline:
             angle.requires_grad_(True)
             mag.requires_grad_(True)
-            optimizer_params = [angle, mag]
+            optimizer_params += [angle, mag]
         else:
+            # z
             z = mag * torch.exp(1j * angle)
             z.detach_().requires_grad_(True)
-            initial_phase = torch.exp(1j * phase)
+            optimizer_params += [z]
+            # global_amp
             # TODO: Don't we need `global_amp.requires_grad_(True)` ?
-            optimizer_params = [z] if not use_global_amp else [z, global_amp]
+            if use_global_amp:
+                global_amp.requires_grad_(True)
+                optimizer_params += [global_amp]
+            # Initial phase
+            initial_phase = torch.exp(1j * phase)
 
         ## Optimizer
         optimizer = hydra.utils.instantiate(optimizer_cfg, optimizer_params)
