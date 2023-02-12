@@ -409,13 +409,6 @@ def evaluation_loop(
                         else: # mode == single
                             freq_error = torch.pow(z.angle().abs() / (2 * math.pi) - target_freq.abs(), 2).mean()
                         print(f"Freq error: {freq_error.tolist()}")
-                # TODO: For debug
-                if step % 100 == 0:
-                    if not use_real_sinusoid_baseline:
-                        print(f"Step {step}, ω & α")
-                        print(z.angle().abs())
-                        print(saturate_or_id(global_amp))
-
             # /Logging
         # /DiffAbS loop
 
