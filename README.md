@@ -25,7 +25,7 @@ import math, torch, matplotlib.pyplot
 from sinusoidal_gradient_descent.core import complex_oscillator
 
 z = torch.tensor([0.7 + 0.7j]) # complex number, representing 'amplitude' and 'frequency'
-signal = complex_oscillator(z, N=100, reduce=True)
+signal = complex_oscillator(z, N=100).sum(dim=-2)
 matplotlib.pyplot.plot(signal)
 ```
 

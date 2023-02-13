@@ -15,27 +15,25 @@ def real_oscillator(freqs, amps, phases=None, N=2048):
     return torch.cos(freqs * n + phases) * amps
 
 
-def complex_oscillator(
-    z: torch.ComplexType,
-    initial_phase: Optional[torch.ComplexType] = None,
-    N: int = 2048,
-    reduce: bool = False,
-):
-    """Generates an exponentially decaying sinusoids."""
+def complex_oscillator(z: torch.ComplexType, initial_phase: Optional[torch.ComplexType] = None, N: int = 2048):
+    """Generates exponentially decaying sinusoids from representative z.
 
-    if initial_phase is None:
-        # If no provided, initialized with zero phase.
-        initial_phase = torch.ones_like(z)
+    Args:
+        z :: (...) - Time-invariant complex numbers representing the decaying sinusoids
+        initial_phase :: (...) - Initial phases as complex numbers on unit circle
+        N - Length of output sinusoid
+    Returns:
+        decaying_sinusoids :: (..., N) - Exponentially decaying sinusoids
+    """
 
-    # 'cumulative product' implementation of the surrogate
-    z = z[..., None].expand(*z.shape, N - 1)
-    z = torch.cat([initial_phase.unsqueeze(-1), z], dim=-1)
-    y = z.cumprod(dim=-1).real
+    # φ = initial_phase ? 0
+    initial_phase = initial_phase if (initial_phase is not None) else torch.ones_like(z)
 
-    if reduce:
-        y = y.sum(dim=-2)
+    # cumulative product :: (...) -> (..., N) - Convert z and φ to [φ, z, z, ..., z] to [φ, φ*z, φ*z*z, ..., φ*z^(N-1)]
+    z_series = torch.cat([initial_phase.unsqueeze(-1), z.unsqueeze(-1).expand(*z.shape, N-1)], dim=-1)
+    decaying_sinusoids = z_series.cumprod(dim=-1).real
 
-    return y
+    return decaying_sinusoids
 
 
 def estimate_amplitude(z, N, representation="fft"):

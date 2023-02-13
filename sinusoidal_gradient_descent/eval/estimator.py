@@ -379,8 +379,9 @@ def evaluation_loop(
             if use_real_sinusoid_baseline:
                 pred_signal = real_oscillator(angle, mag, phase, target_len).sum(dim=-2)
             else:
-                #                                                              afterwards apply global_amp to each partials | single mode has only 1 partial
-                pred_signal = complex_oscillator(z, initial_phase, target_len, reduce=False if use_global_amp or mode == "single" else True)
+                pred_signal = complex_oscillator(z, initial_phase, target_len)
+                if (not use_global_amp) and (mode is not "single"):
+                    pred_signal = pred_signal.sum(dim=-2)
                 # Amplitudes
                 if use_global_amp:
                     pred_signal = pred_signal * saturate_or_id(global_amp)[..., None]
