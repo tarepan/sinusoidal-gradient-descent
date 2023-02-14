@@ -261,15 +261,14 @@ def sample_initial_predictions(
     all_random_in_batch: bool = False, # If true, all predictions in a batch will be sampled randomly. If false, one randomly sampled prediction will be repeated across the batch dimension.
     seed: int = 0,                     # The random seed
     device: str = "cpu",               # The device to place the initial predictions on
-    flatten: bool = False,             # Whether to flatten the initial predictions
 ):
     """Samples initial parameters for sinusoidal frequency estimation.
 
-    Outputs:
-        freqs - Random sampling from within the range
-        amps - Random sampling from within the range
-        phases - Based on specifier argument
-        global_amp - 1/|K|, equal between components and sum to 1
+    Returns:
+        freqs      :: (B, K) - Random sampling from within the range
+        amps       :: (B, K) - Random sampling from within the range
+        phases     :: (B, K) - Based on specifier argument
+        global_amp :: (B, K) - 1/|K|, equal between components and sum to 1
     """
 
     # Shape of 4 params : (B, K) | (K,)
@@ -287,17 +286,11 @@ def sample_initial_predictions(
             global_amp = torch.special.logit(global_amp)
 
     if not all_random_in_batch:
-        # Tensor[K,] -> Tensor[1, K] -> Tensor[N, K]
+        # (K,) -> (1, K) -> (B, K)
         freqs      =      freqs.unsqueeze(0).repeat(batch_size, 1)
         amps       =       amps.unsqueeze(0).repeat(batch_size, 1)
         phases     =     phases.unsqueeze(0).repeat(batch_size, 1)
         global_amp = global_amp.unsqueeze(0).repeat(batch_size, 1)
-
-    if flatten:
-        freqs      =      freqs.sum(dim=-1)
-        amps       =       amps.sum(dim=-1)
-        phases     =     phases.sum(dim=-1)
-        global_amp = global_amp.sum(dim=-1)
 
     return freqs, amps, phases, global_amp
 
@@ -346,7 +339,7 @@ def evaluation_loop(
         target_snr    = batch["snr"   ].float()
         target_len    = target_signal.shape[-1]
 
-        ## InitParam: Adjust size (B,) | (B, K) -> (B') | (B', K)
+        ## InitParam :: (B', K) -> (B, K) - Adjust batch size
         angle, mag, phase, global_amp = initial_params
         batch_size = target_signal.shape[0]
         angle      =      angle[:batch_size]
@@ -361,7 +354,7 @@ def evaluation_loop(
             mag.requires_grad_(True)
             optimizer_params += [angle, mag]
         else:
-            # z :: (B,) | (B, K)
+            # z :: (B, K)
             z = mag * torch.exp(1j * angle)
             z.detach_().requires_grad_(True)
             optimizer_params += [z]
@@ -380,20 +373,15 @@ def evaluation_loop(
 
         # DiffAbS loop
         for step in range(n_steps):
-            # Forward :: (B,) | (B, K) -> (B, L) | (B, K, L) -> (B,) | (B, L)
+            # Forward :: (B, K) -> (B, K, L) -> (B, L)
             optimizer.zero_grad()
             if use_real_sinusoid_baseline:
-                pred_signal = (mag.unsqueeze(-1) * real_oscillator(angle, phase, target_len)).sum(dim=-2)
+                pred_signal = mag.unsqueeze(-1) * real_oscillator(angle, phase, target_len)
             else:
                 pred_signal = complex_oscillator(z, initial_phase, target_len)
-                if (not use_global_amp) and (mode is not "single"):
-                    pred_signal = pred_signal.sum(dim=-2)
-                # Amplitudes
                 if use_global_amp:
-                    pred_signal = pred_signal * saturate_or_id(global_amp)[..., None]
-                    if mode == "multi":
-                        # sum all partials
-                        pred_signal = pred_signal.sum(dim=-2)
+                    pred_signal = saturate_or_id(global_amp).unsqueeze(-1) * pred_signal
+            pred_signal = pred_signal.sum(dim=-2)
             # /Forward
 
             # Loss-Backward-Optimize
@@ -421,26 +409,25 @@ def evaluation_loop(
         # /DiffAbS loop
 
         # Surrogate-to-Sinusoid
-        ## Parameter correction
+        ## Parameter correction, pred_freq :: (B, K), pred_amp :: (B, K)
         if use_real_sinusoid_baseline:
-            # :: (B,) | (B, K)
             pred_freq, pred_amp = angle, mag
         else:
-            # Frequency extraction :: (B,) | (B, K) -> (B,) | (B, K)
+            # Frequency extraction
             pred_freq = z.angle().abs()
             # Amplitude correction
+            # TODO: Check whether removed `flatten` cause bug here or not
             pred_amp = hydra.utils.call(amplitude_estimator_cfg, z[..., None], target_len)[..., 0]
             if use_global_amp:
                 pred_amp = pred_amp * saturate_or_id(global_amp)
-        ## Signal generation
-        # :: (B,) | (B, K) -> (B, L) | (B, K, L)
-        pred_signal = pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase, target_len)
-        if mode == "multi":
-            # (B, K, L) -> (B, L)
-            pred_signal = pred_signal.sum(dim=-2)
-        # /Surrogate-to-Sinusoid :: -> (B, L)
+        ## Signal generation :: (B, K) -> (B, K, L) -> (B, L)
+        pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase, target_len)).sum(dim=-2)
+        # /Surrogate-to-Sinusoid
 
         # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate
+        if mode is not "multi":
+            # (B, K=1) -> (B,)
+            pred_freq, pred_amp = pred_freq.unsqueeze(-1), pred_amp.unsqueeze(-1)
         metrics = hydra.utils.call(
             metric_fn_cfg,
             target_signal.detach(), target_freq.detach(),               target_amp.detach(), target_snr.detach(),
