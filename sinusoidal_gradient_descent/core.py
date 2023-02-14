@@ -6,12 +6,11 @@ from typing import Optional
 import torch
 
 
-def real_oscillator(freq, amp, phase = None, length: int = 2048):
+def real_oscillator(freq, phase = None, length: int = 2048):
     """Generates real sinusoids.
     
     Args:
         freq  :: (*) - Time-invariant angular frequencies [rad/sample]
-        amp   :: (*)
         phase :: (*) - Initial phase [rad]
         length - Length of output sinusoid
     Returns:
@@ -22,11 +21,11 @@ def real_oscillator(freq, amp, phase = None, length: int = 2048):
     phase = phase if (phase is not None) else torch.zeros_like(freq)
 
     # Reshape :: (*) -> (*, L=1)
-    freq, phase, amp = freq.unsqueeze(-1), phase.unsqueeze(-1), amp.unsqueeze(-1)
+    freq, phase = freq.unsqueeze(-1), phase.unsqueeze(-1)
 
     # Direct sinusoids :: (*, L=1) * (L=L,) -> (*, L=L)
     n = torch.arange(length, dtype=torch.float32, device=freq.device)
-    return amp * torch.cos(freq * n + phase)
+    return torch.cos(freq * n + phase)
 
 
 def complex_oscillator(z: torch.ComplexType, phase: Optional[torch.ComplexType] = None, length: int = 2048):

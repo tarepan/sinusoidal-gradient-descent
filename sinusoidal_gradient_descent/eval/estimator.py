@@ -377,7 +377,7 @@ def evaluation_loop(
             # Forward
             optimizer.zero_grad()
             if use_real_sinusoid_baseline:
-                pred_signal = real_oscillator(angle, mag, phase, target_len).sum(dim=-2)
+                pred_signal = (mag.unsqueeze(-1) * real_oscillator(angle, phase, target_len)).sum(dim=-2)
             else:
                 pred_signal = complex_oscillator(z, initial_phase, target_len)
                 if (not use_global_amp) and (mode is not "single"):
@@ -425,7 +425,7 @@ def evaluation_loop(
             if use_global_amp:
                 pred_amp = pred_amp * saturate_or_id(global_amp)
         ## Signal generation with corrected parameters
-        pred_signal = real_oscillator(pred_freq, pred_amp, phase, target_len).sum(dim=-2)
+        pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase, target_len)).sum(dim=-2)
         # /Surrogate-to-Sinusoid
 
         # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate
