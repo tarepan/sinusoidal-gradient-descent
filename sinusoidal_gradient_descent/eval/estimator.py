@@ -261,38 +261,44 @@ def sample_initial_predictions(
     all_random_in_batch: bool = False, # If true, all predictions in a batch will be sampled randomly. If false, one randomly sampled prediction will be repeated across the batch dimension.
     seed: int = 0,                     # The random seed
     device: str = "cpu",               # The device to place the initial predictions on
+    use_real_sinusoid: bool = False,
 ):
     """Samples initial parameters for sinusoidal frequency estimation.
 
-    Returns:
-        freqs      :: (B, K) - Random sampling from within the range
-        amps       :: (B, K) - Random sampling from within the range
-        phases     :: (B, K) - Based on specifier argument
-        global_amp :: (B, K) - 1/|K|, equal between components and sum to 1
+    Outputs:
+        spin      :: (B, K) - Random sampling from within the range [rad] | z from random-sampled freq and magnitude
+        amplitude :: (B, K) - Random sampling from within the range       | 1/|K|, could be logit form
+        phase     :: (B, K) - Based on specifier argument
     """
+
+    use_r = use_real_sinusoid
 
     # Shape of 4 params : (B, K) | (K,)
     shape = (batch_size, n_sinusoids) if all_random_in_batch else (n_sinusoids,)
 
     # Sampling
     with torch.random.fork_rng():
-        # Rules are described above.
         torch.manual_seed(seed)
-        freqs = 2 * math.pi * sample_from_range(freq_range, shape).to(device)
-        amps = sample_from_range(amp_range, shape).to(device)
-        phases = torch.ones(*shape, device=device) * initial_phase
+
+        freq       = 2 * math.pi * sample_from_range(freq_range, shape).to(device)
+        mag_linear =               sample_from_range(amp_range,  shape).to(device)
+        phase_rad  = torch.ones(*shape, device=device) * initial_phase
         global_amp = torch.ones(*shape, device=device) / n_sinusoids
+
+        # Parameters : (real | complex) - (freq | z), (phase_rad | complex phase component), (mag_linear | global_amp)
+        spin       = freq       if use_r else (mag_linear * torch.exp(1j * freq)).detach()
+        phase      = phase_rad  if use_r else torch.exp(1j * phase_rad)
+        amplitude  = mag_linear if use_r else global_amp
         if invert_sigmoid:
-            global_amp = torch.special.logit(global_amp)
+            amplitude = torch.special.logit(amplitude)
 
     if not all_random_in_batch:
         # (K,) -> (1, K) -> (B, K)
-        freqs      =      freqs.unsqueeze(0).repeat(batch_size, 1)
-        amps       =       amps.unsqueeze(0).repeat(batch_size, 1)
-        phases     =     phases.unsqueeze(0).repeat(batch_size, 1)
-        global_amp = global_amp.unsqueeze(0).repeat(batch_size, 1)
+        spin      =      spin.unsqueeze(0).repeat(batch_size, 1)
+        amplitude = amplitude.unsqueeze(0).repeat(batch_size, 1)
+        phases    =    phases.unsqueeze(0).repeat(batch_size, 1)
 
-    return freqs, amps, phases, global_amp
+    return spin, amplitude, phase
 
 
 def abs_freq(z):
@@ -324,6 +330,8 @@ def evaluation_loop(
         normalise_complex_grads - Unused feature (always `False`), but keep alive for future experiments
     """
 
+    use_r = use_real_sinusoid_baseline
+
     # Purpose: Keep in [0, 1]
     # This is not general way, but it is correct for the paper's experiment because a reference signal's amplitude α_k is always <1.
     saturate_or_id = torch.sigmoid if saturate_global_amp else lambda x:x
@@ -338,35 +346,28 @@ def evaluation_loop(
         target_amp    = batch["amp"   ].float().to(device)
         target_snr    = batch["snr"   ].float()
         target_len    = target_signal.shape[-1]
+        batch_size    = target_signal.shape[0]
 
         ## InitParam :: (B', K) -> (B, K) - Adjust batch size
-        angle, mag, phase, global_amp = initial_params
-        batch_size = target_signal.shape[0]
-        angle      =      angle[:batch_size]
-        mag        =        mag[:batch_size]
-        phase      =      phase[:batch_size]
-        global_amp = global_amp[:batch_size]
+        spin, amplitude, phase = initial_params
+        spin, amplitude, phase = spin[:batch_size], amplitude[:batch_size], phase[:batch_size]
 
-        ## Param: `angle` & `mag` for real oscillator | `z` & `global_amp` for multi complex oscillator
-        optimizer_params = []
-        if use_real_sinusoid_baseline:
-            angle.requires_grad_(True)
-            mag.requires_grad_(True)
-            optimizer_params += [angle, mag]
-        else:
-            # z :: (B, K)
-            z = mag * torch.exp(1j * angle)
-            z.detach_().requires_grad_(True)
-            optimizer_params += [z]
-            # global_amp
-            # TODO: Don't we need `global_amp.requires_grad_(True)` ?
-            if use_global_amp:
-                global_amp.requires_grad_(True)
-                optimizer_params += [global_amp]
-            # Initial phase
-            initial_phase = torch.exp(1j * phase)
+        ## Model
+        oscillator = real_oscillator if use_r else complex_oscillator
 
         ## Optimizer
+        ### spin
+        optimizer_params = []
+        spin.requires_grad_(True)
+        optimizer_params += [spin]
+        ### amplitude
+        if use_global_amp:
+            amplitude.requires_grad_(True)
+            optimizer_params += [amplitude]
+        ### phase
+        # phase.requires_grad_(True)
+        # optimizer_params += [phase]
+        ### optim
         optimizer = hydra.utils.instantiate(optimizer_cfg, optimizer_params)
 
         # /Preparation
@@ -375,12 +376,9 @@ def evaluation_loop(
         for step in range(n_steps):
             # Forward :: (B, K) -> (B, K, L) -> (B, L)
             optimizer.zero_grad()
-            if use_real_sinusoid_baseline:
-                pred_signal = mag.unsqueeze(-1) * real_oscillator(angle, phase, target_len)
-            else:
-                pred_signal = complex_oscillator(z, initial_phase, target_len)
-                if use_global_amp:
-                    pred_signal = saturate_or_id(global_amp).unsqueeze(-1) * pred_signal
+            pred_signal = oscillator(spin, phase, target_len)
+            if use_global_amp:
+                pred_signal = saturate_or_id(amplitude).unsqueeze(-1) * pred_signal
             pred_signal = pred_signal.sum(dim=-2)
             # /Forward
 
@@ -389,8 +387,8 @@ def evaluation_loop(
             loss = hydra.utils.call(loss_cfg, pred_signal, target_signal)
             loss.backward()
             # Unused feature, keep alive for future experiments
-            # if normalise_complex_grads and not use_real_sinusoid_baseline:
-            #     z.grad = z.grad / torch.clamp(z.grad.abs(), min=1e-10)
+            # if normalise_complex_grads and not use_r:
+            #     spin.grad = spin.grad / torch.clamp(spin.grad.abs(), min=1e-10)
             optimizer.step()
             # /Loss-Backward-Optimize
 
@@ -410,18 +408,18 @@ def evaluation_loop(
 
         # Surrogate-to-Sinusoid
         ## Parameter correction, pred_freq :: (B, K), pred_amp :: (B, K)
-        if use_real_sinusoid_baseline:
-            pred_freq, pred_amp = angle, mag
+        if use_r:
+            pred_freq, pred_amp = spin, amplitude
         else:
             # Frequency extraction
-            pred_freq = z.angle().abs()
+            pred_freq = spin.angle().abs()
             # Amplitude correction
             # TODO: Check whether removed `flatten` cause bug here or not
-            pred_amp = hydra.utils.call(amplitude_estimator_cfg, z[..., None], target_len)[..., 0]
+            pred_amp = hydra.utils.call(amplitude_estimator_cfg, spin.unsqueeze(-1), target_len)[..., 0]
             if use_global_amp:
-                pred_amp = pred_amp * saturate_or_id(global_amp)
+                pred_amp = pred_amp * saturate_or_id(amplitude)
         ## Signal generation :: (B, K) -> (B, K, L) -> (B, L)
-        pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase, target_len)).sum(dim=-2)
+        pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase_rad, target_len)).sum(dim=-2)
         # /Surrogate-to-Sinusoid
 
         # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate

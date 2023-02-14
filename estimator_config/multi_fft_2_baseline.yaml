@@ -10,7 +10,7 @@ defaults:
 
 param_sampler:
   n_sinusoids: 2
-  invert_sigmoid: false
+  use_real_sinusoid: true
 
 evaluation:
   use_real_sinusoid_baseline: true

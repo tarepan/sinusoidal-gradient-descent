@@ -7,4 +7,5 @@ initial_phase: 0.0
 
 all_random_in_batch: true
 
-invert_sigmoid: true # Should be linked with `evaluation.saturate_global_amp`
+invert_sigmoid: false # Should be linked with `evaluation.saturate_global_amp`
+use_real_sinusoid: false

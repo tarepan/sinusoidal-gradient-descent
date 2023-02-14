@@ -10,10 +10,10 @@ defaults:
 
 param_sampler:
   n_sinusoids: 32
+  invert_sigmoid: true
 
-
-
-
+evaluation:
+  saturate_global_amp: true
 
 dataset:
   n_components: 32
