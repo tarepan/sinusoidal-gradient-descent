@@ -204,7 +204,7 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
             torch.random.manual_seed(dataset_seed)
             shape = (n_samples, n_components)
             ## freqs :: Tensor[N, K] - ~ U[freq_range]
-            self.freqs =  sample_from_range(freq_range, shape)
+            self.freqs  = sample_from_range(freq_range, shape)
             ## amps :: Tensor[N, K] - ~ U[amp_range], then normalized to total 1 in each signals
             unnorm_amps = sample_from_range(amp_range,  shape)
             self.amps = unnorm_amps / unnorm_amps.sum(dim=1, keepdim=True) 
@@ -258,23 +258,34 @@ def fill_batch(item, batch_size):
 
 
 def sample_initial_predictions(
-    n_sinusoids: int,                  # The number of sinusoidal components
-    freq_range: Tuple[float],          # The range of possible frequencies
-    amp_range: Tuple[float],           # The range of possible amplitudes
-    initial_phase: float,              # The initial phase of the sinusoids
-    invert_sigmoid: bool = False,      # Whether to use `global_amp` as `logit(a_k)`, enabling [0, 1]-bounded a_k with `sigmoid(global_amp)`
-    batch_size: int = 0,               # The batch size of initial predictions
-    all_random_in_batch: bool = False, # If true, all predictions in a batch will be sampled randomly. If false, one randomly sampled prediction will be repeated across the batch dimension.
-    seed: int = 0,                     # The random seed
-    device: str = "cpu",               # The device to place the initial predictions on
+    n_sinusoids: int,
+    freq_range: Tuple[float],
+    amp_range: Tuple[float],
+    initial_phase: float,
+    invert_sigmoid: bool = False,
+    batch_size: int = 0,
+    all_random_in_batch: bool = False,
+    seed: int = 0,
+    device: str = "cpu",
     use_real_sinusoid: bool = False,
 ):
     """Samples initial parameters for sinusoidal frequency estimation.
 
-    Outputs:
-        spin      :: (B, K) - Random sampling from within the range [rad] | z from random-sampled freq and magnitude
-        amplitude :: (B, K) - Random sampling from within the range       | 1/|K|, could be logit form
-        phase     :: (B, K) - Based on specifier argument
+    Args:
+        n_sinusoids - The number of sinusoidal components
+        freq_range - The range of possible frequencies
+        amp_range  - The range of possible amplitudes
+        initial_phase - The initial phase of the sinusoids
+        invert_sigmoid - Whether to use `amp` as `logit(a_k)`, enabling [0, 1]-bounded a_k with `sigmoid(global_amp)`
+        batch_size - The batch size of initial predictions
+        all_random_in_batch - If true, all predictions in a batch will be sampled randomly. If false, one randomly sampled prediction will be repeated across the batch dimension.
+        seed - The random seed
+        device - The device to place the initial predictions on
+        use_real_sinusoid - Oscillator type
+    Returns:
+        spin  :: (B, K) - Spin,        angular freq. from within the range [rad] | z from random-sampled freq. and amp.
+        amp   :: (B, K) - Amplitude,   random sampling from within the range     | fixed 1/|K| (both could be logit form)
+        phase :: (B, K) - Init. Phase, phase specified by arg [rad]              | complex phase component specified by arg
     """
 
     use_r = use_real_sinusoid
@@ -286,23 +297,23 @@ def sample_initial_predictions(
     with torch.random.fork_rng():
         torch.manual_seed(seed)
 
-        freq       = 2 * math.pi * sample_from_range(freq_range, shape).to(device)
-        mag_linear =               sample_from_range(amp_range,  shape).to(device)
-        phase_rad  = torch.ones(*shape, device=device) * initial_phase
-        global_amp = torch.ones(*shape, device=device) / n_sinusoids
+        freq      = 2 * math.pi * sample_from_range(freq_range, shape).to(device)
+        mag_range =               sample_from_range(amp_range,  shape).to(device)
+        mag_div_k = torch.ones(*shape, device=device) / n_sinusoids
+        phase_rad = torch.ones(*shape, device=device) * initial_phase
 
-        # Parameters : (real | complex) - (freq | z), (phase_rad | complex phase component), (mag_linear | global_amp)
-        spin       = freq       if use_r else (mag_linear * torch.exp(1j * freq)).detach()
-        phase      = phase_rad  if use_r else torch.exp(1j * phase_rad)
-        amplitude  = mag_linear if use_r else global_amp
+        # Parameters
+        spin  = freq      if use_r else (mag_range * torch.exp(1j * freq)).detach()
+        phase = phase_rad if use_r else torch.exp(1j * phase_rad)
+        amp   = mag_range if use_r else mag_div_k
         if invert_sigmoid:
-            amplitude = torch.special.logit(amplitude)
+            amp = torch.special.logit(amp)
 
     if not all_random_in_batch:
         # (K,) -> (B, K)
-        spin, amplitude, phase = fill_batch(spin, batch_size) ,fill_batch(amplitude, batch_size), fill_batch(phase, batch_size)
+        spin, amp, phase = fill_batch(spin, batch_size) ,fill_batch(amp, batch_size), fill_batch(phase, batch_size)
 
-    return spin, amplitude, phase
+    return spin, amp, phase
 
 
 def abs_freq(z):
@@ -343,7 +354,7 @@ def evaluation_loop(
 
     # Purpose: Keep in [0, 1]
     # This is not general way, but it is correct for the paper's experiment because a reference signal's amplitude α_k is always <1.
-    saturate_or_id = torch.sigmoid if saturate_global_amp else lambda x:x
+    saturate = torch.sigmoid if saturate_global_amp else lambda x:x
 
     for batch in dataloader:
 
@@ -352,8 +363,8 @@ def evaluation_loop(
         target_signal, target_freq, target_amp, target_snr = pick_activated_items(["signal", "freq", "amp", "snr"])
         batch_size, length = target_signal.shape[0], target_signal.shape[-1]
         ## Parameters :: (B', K) -> (B, K)
-        spin, amplitude, phase = initial_params
-        spin, amplitude, phase = spin[:batch_size], amplitude[:batch_size], phase[:batch_size]
+        spin, amp, phase = initial_params
+        spin, amp, phase = spin[:batch_size], amp[:batch_size], phase[:batch_size]
 
         ## Model
         oscillator = real_oscillator if use_r else complex_oscillator
@@ -363,10 +374,10 @@ def evaluation_loop(
         optimizer_params = []
         spin.requires_grad_(True)
         optimizer_params += [spin]
-        ### amplitude
+        ### amp
         if use_global_amp:
-            amplitude.requires_grad_(True)
-            optimizer_params += [amplitude]
+            amp.requires_grad_(True)
+            optimizer_params += [amp]
         ### phase
         # phase.requires_grad_(True)
         # optimizer_params += [phase]
@@ -381,7 +392,7 @@ def evaluation_loop(
             optimizer.zero_grad()
             pred_signal = oscillator(spin, phase, length)
             if use_global_amp:
-                pred_signal = saturate_or_id(amplitude).unsqueeze(-1) * pred_signal
+                pred_signal = saturate(amp).unsqueeze(-1) * pred_signal
             pred_signal = pred_signal.sum(dim=-2)
 
             # Loss-Backward-Optimize
@@ -406,14 +417,14 @@ def evaluation_loop(
         ## Surrogate-to-Sinusoid
         ### Parameter correction, pred_freq :: (B, K), pred_amp :: (B, K)
         if use_r:
-            pred_freq, pred_amp = spin, amplitude
+            pred_freq, pred_amp = spin, amp
         else:
             pred_freq = spin.angle().abs()
             # Amplitude correction
             # TODO: Check whether removed `flatten` cause bug here or not
             pred_amp = hydra.utils.call(amplitude_estimator_cfg, spin.unsqueeze(-1), length)[..., 0]
             if use_global_amp:
-                pred_amp = pred_amp * saturate_or_id(amplitude)
+                pred_amp = pred_amp * saturate(amp)
         ### Signal generation :: (B, K) -> (B, K, L) -> (B, L)
         pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase_rad, length)).sum(dim=-2)
 
