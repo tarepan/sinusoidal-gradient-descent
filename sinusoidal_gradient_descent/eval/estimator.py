@@ -9,6 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 
 from sinusoidal_gradient_descent.core import (
     complex_oscillator,
@@ -301,6 +302,11 @@ def sample_initial_predictions(
     return freqs, amps, phases, global_amp
 
 
+def abs_freq(z):
+    """Extract absolute frequency (not angular frequency) from comlex number."""
+    return z.angle().abs() / (2 * math.pi)
+
+
 def evaluation_loop(
     dataloader: torch.utils.data.DataLoader,
     loss_cfg: DictConfig,
@@ -405,10 +411,11 @@ def evaluation_loop(
                 if step % log_interval == 0:
                     print(f"Step {step}: {loss.item()}")
                     if not use_real_sinusoid_baseline:
+                        # MinLapCost for multi, MSE for single
                         if mode == "multi":
-                            freq_error = np.mean(min_lap_cost(z.angle().abs() / (2 * math.pi), target_freq.abs(), True))
-                        else: # mode == single
-                            freq_error = torch.pow(z.angle().abs() / (2 * math.pi) - target_freq.abs(), 2).mean()
+                            freq_error = np.mean(min_lap_cost(abs_freq(z), target_freq.abs(), True))
+                        else:
+                            freq_error = F.mse_loss(abs_freq(z), target_freq.abs())
                         print(f"Freq error: {freq_error.tolist()}")
             # /Logging
         # /DiffAbS loop
