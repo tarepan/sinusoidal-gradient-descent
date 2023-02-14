@@ -50,22 +50,24 @@ def complex_oscillator(z: torch.ComplexType, phase: Optional[torch.ComplexType] 
     return torch.cat([phase, z.expand(*shape, length-1)], dim=-1).cumprod(dim=-1).real
 
 
-def estimate_amplitude(z, N, representation="fft"):
+def estimate_amplitude(z, length: int, representation="fft"):
     """Estimate amplitude of real oscillator from surrogate complex oscillator.
 
     Args:
-        z - complex numbers representing complex oscillator
-        N - The number of samples
+        z :: (*, 1)? - complex numbers representing complex oscillator
+        length - The number of samples
         representation - Estimation based on FFT-MSE or normal MSE
     """
 
-    # Source signal
-    V = complex_oscillator(z, length=N).sum(dim=-2)
+    # Source signal :: (*, 1) -> (*, 1, L) -> (*, L)
+    V = complex_oscillator(z, length=length).sum(dim=-2)
 
     # Target real oscillator with amplutide 1
-    n = torch.arange(N, device=z.device)
-    omega = torch.angle(z)
-    U = torch.cos(omega[..., None, :] * n[None, :, None])
+    n = torch.arange(length, device=z.device)
+    ## (*, 1)
+    freq = torch.angle(z)
+    ## (*, 1, 1) * (1, L, 1) -> maybe (*, L, 1)
+    U = torch.cos(freq[..., None, :] * n[None, :, None])
 
     # Amplitude estimation
     ## FFT-MSE or MSE
