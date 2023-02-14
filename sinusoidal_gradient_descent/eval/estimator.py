@@ -256,7 +256,7 @@ def sample_initial_predictions(
     amp_range: Tuple[float],           # The range of possible amplitudes
     initial_phase: float,              # The initial phase of the sinusoids
     invert_sigmoid: bool = False,      # Whether to use `global_amp` as `logit(a_k)`, enabling [0, 1]-bounded a_k with `sigmoid(global_amp)`
-    batch_size: Optional[int] = None,  # The batch size of initial predictions
+    batch_size: int = None,            # The batch size of initial predictions
     all_random_in_batch: bool = False, # If true, all predictions in a batch will be sampled randomly. If false, one randomly sampled prediction will be repeated across the batch dimension.
     seed: int = 0,                     # The random seed
     device: str = "cpu",               # The device to place the initial predictions on
@@ -271,8 +271,8 @@ def sample_initial_predictions(
         global_amp - 1/|K|, equal between components and sum to 1
     """
 
-    # Shape of 4 params : (n_batch, n_components) | (n_components,)
-    shape = (batch_size, n_sinusoids) if (batch_size is not None and all_random_in_batch) else (n_sinusoids,)
+    # Shape of 4 params : (B, K) | (K,)
+    shape = (batch_size, n_sinusoids) if all_random_in_batch else (n_sinusoids,)
 
     # Sampling
     with torch.random.fork_rng():
@@ -285,7 +285,7 @@ def sample_initial_predictions(
         if invert_sigmoid:
             global_amp = torch.special.logit(global_amp)
 
-    if batch_size is not None and not all_random_in_batch:
+    if not all_random_in_batch:
         # Tensor[K,] -> Tensor[1, K] -> Tensor[N, K]
         freqs      =      freqs.unsqueeze(0).repeat(batch_size, 1)
         amps       =       amps.unsqueeze(0).repeat(batch_size, 1)
