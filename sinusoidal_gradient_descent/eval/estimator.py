@@ -310,6 +310,11 @@ def abs_freq(z):
     return z.angle().abs() / (2 * math.pi)
 
 
+def pick_activated_items(batch, names, device):
+    """Pick items from a batch with activation as Tensor."""
+    return list(map(lambda name: batch[name].float().to(device), names))
+
+
 def evaluation_loop(
     dataloader: torch.utils.data.DataLoader,
     loss_cfg: DictConfig,
@@ -343,16 +348,10 @@ def evaluation_loop(
     for batch in dataloader:
 
         # Preparation
-
-        ## Target: Adjust type and device, extract info
-        target_signal = batch["signal"].float().to(device)
-        target_freq   = batch["freq"  ].float().to(device)
-        target_amp    = batch["amp"   ].float().to(device)
-        target_snr    = batch["snr"   ].float()
-        target_len    = target_signal.shape[-1]
-        batch_size    = target_signal.shape[0]
-
-        ## InitParam :: (B', K) -> (B, K) - Adjust batch size
+        ## Target ::
+        target_signal, target_freq, target_amp, target_snr = pick_activated_items(["signal", "freq", "amp", "snr"])
+        batch_size, length = target_signal.shape[0], target_signal.shape[-1]
+        ## Parameters :: (B', K) -> (B, K)
         spin, amplitude, phase = initial_params
         spin, amplitude, phase = spin[:batch_size], amplitude[:batch_size], phase[:batch_size]
 
@@ -380,21 +379,15 @@ def evaluation_loop(
         for step in range(n_steps):
             # Forward :: (B, K) -> (B, K, L) -> (B, L)
             optimizer.zero_grad()
-            pred_signal = oscillator(spin, phase, target_len)
+            pred_signal = oscillator(spin, phase, length)
             if use_global_amp:
                 pred_signal = saturate_or_id(amplitude).unsqueeze(-1) * pred_signal
             pred_signal = pred_signal.sum(dim=-2)
-            # /Forward
 
             # Loss-Backward-Optimize
-            ## L2 loss (torch.nn.functional.mse_loss) | FT-L2 loss (`core.fft_loss`)
             loss = hydra.utils.call(loss_cfg, pred_signal, target_signal)
             loss.backward()
-            # Unused feature, keep alive for future experiments
-            # if normalise_complex_grads and not use_r:
-            #     spin.grad = spin.grad / torch.clamp(spin.grad.abs(), min=1e-10)
             optimizer.step()
-            # /Loss-Backward-Optimize
 
             # Logging
             with torch.no_grad():
@@ -407,26 +400,24 @@ def evaluation_loop(
                         else:
                             freq_error = F.mse_loss(abs_freq(z), target_freq.abs())
                         print(f"Freq error: {freq_error.tolist()}")
-            # /Logging
-        # /DiffAbS loop
 
-        # Surrogate-to-Sinusoid
-        ## Parameter correction, pred_freq :: (B, K), pred_amp :: (B, K)
+        # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate
+
+        ## Surrogate-to-Sinusoid
+        ### Parameter correction, pred_freq :: (B, K), pred_amp :: (B, K)
         if use_r:
             pred_freq, pred_amp = spin, amplitude
         else:
-            # Frequency extraction
             pred_freq = spin.angle().abs()
             # Amplitude correction
             # TODO: Check whether removed `flatten` cause bug here or not
-            pred_amp = hydra.utils.call(amplitude_estimator_cfg, spin.unsqueeze(-1), target_len)[..., 0]
+            pred_amp = hydra.utils.call(amplitude_estimator_cfg, spin.unsqueeze(-1), length)[..., 0]
             if use_global_amp:
                 pred_amp = pred_amp * saturate_or_id(amplitude)
-        ## Signal generation :: (B, K) -> (B, K, L) -> (B, L)
-        pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase_rad, target_len)).sum(dim=-2)
-        # /Surrogate-to-Sinusoid
+        ### Signal generation :: (B, K) -> (B, K, L) -> (B, L)
+        pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase_rad, length)).sum(dim=-2)
 
-        # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate
+        ## Metrics
         if mode is not "multi":
             # (B, K=1) -> (B,)
             pred_freq, pred_amp = pred_freq.unsqueeze(-1), pred_amp.unsqueeze(-1)
@@ -435,10 +426,9 @@ def evaluation_loop(
             target_signal.detach(), target_freq.detach(),               target_amp.detach(), target_snr.detach(),
             pred_signal.detach(),   pred_freq.detach() / (2 * math.pi), pred_amp.detach(),
         )
-        # /Evaluation
-
         metrics["seed"] = seed
         df = pd.DataFrame(metrics)
+
     return df
 
 
