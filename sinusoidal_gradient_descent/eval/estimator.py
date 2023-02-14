@@ -346,7 +346,7 @@ def evaluation_loop(
         target_snr    = batch["snr"   ].float()
         target_len    = target_signal.shape[-1]
 
-        ## InitParam: Adjust size (B, K) -> (B', K)
+        ## InitParam: Adjust size (B,) | (B, K) -> (B') | (B', K)
         angle, mag, phase, global_amp = initial_params
         batch_size = target_signal.shape[0]
         angle      =      angle[:batch_size]
@@ -361,7 +361,7 @@ def evaluation_loop(
             mag.requires_grad_(True)
             optimizer_params += [angle, mag]
         else:
-            # z
+            # z :: (B,) | (B, K)
             z = mag * torch.exp(1j * angle)
             z.detach_().requires_grad_(True)
             optimizer_params += [z]
@@ -380,7 +380,7 @@ def evaluation_loop(
 
         # DiffAbS loop
         for step in range(n_steps):
-            # Forward
+            # Forward :: (B,) | (B, K) -> (B, L) | (B, K, L) -> (B,) | (B, L)
             optimizer.zero_grad()
             if use_real_sinusoid_baseline:
                 pred_signal = (mag.unsqueeze(-1) * real_oscillator(angle, phase, target_len)).sum(dim=-2)
@@ -423,17 +423,22 @@ def evaluation_loop(
         # Surrogate-to-Sinusoid
         ## Parameter correction
         if use_real_sinusoid_baseline:
+            # :: (B,) | (B, K)
             pred_freq, pred_amp = angle, mag
         else:
-            # Frequency extraction
+            # Frequency extraction :: (B,) | (B, K) -> (B,) | (B, K)
             pred_freq = z.angle().abs()
             # Amplitude correction
             pred_amp = hydra.utils.call(amplitude_estimator_cfg, z[..., None], target_len)[..., 0]
             if use_global_amp:
                 pred_amp = pred_amp * saturate_or_id(global_amp)
-        ## Signal generation with corrected parameters
-        pred_signal = (pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase, target_len)).sum(dim=-2)
-        # /Surrogate-to-Sinusoid
+        ## Signal generation
+        # :: (B,) | (B, K) -> (B, L) | (B, K, L)
+        pred_signal = pred_amp.unsqueeze(-1) * real_oscillator(pred_freq, phase, target_len)
+        if mode == "multi":
+            # (B, K, L) -> (B, L)
+            pred_signal = pred_signal.sum(dim=-2)
+        # /Surrogate-to-Sinusoid :: -> (B, L)
 
         # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate
         metrics = hydra.utils.call(
