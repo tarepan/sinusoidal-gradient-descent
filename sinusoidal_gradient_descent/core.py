@@ -6,34 +6,49 @@ from typing import Optional
 import torch
 
 
-def real_oscillator(freqs, amps, phases=None, N=2048):
-    """Generate real sinusoids."""
-    freqs = freqs[..., None]
-    amps = amps[..., None]
-    phases = phases[..., None] if phases is not None else torch.zeros_like(freqs)
-    n = torch.arange(N, dtype=torch.float32, device=freqs.device)[..., None, :]
-    return torch.cos(freqs * n + phases) * amps
-
-
-def complex_oscillator(z: torch.ComplexType, initial_phase: Optional[torch.ComplexType] = None, N: int = 2048):
-    """Generates exponentially decaying sinusoids from representative z.
-
+def real_oscillator(freq, amp, phase = None, length: int = 2048):
+    """Generates real sinusoids.
+    
     Args:
-        z :: (...) - Time-invariant complex numbers representing the decaying sinusoids
-        initial_phase :: (...) - Initial phases as complex numbers on unit circle
-        N - Length of output sinusoid
+        freq  :: (*) - Time-invariant angular frequencies [rad/sample]
+        amp   :: (*)
+        phase :: (*) - Initial phase [rad]
+        length - Length of output sinusoid
     Returns:
-        decaying_sinusoids :: (..., N) - Exponentially decaying sinusoids
+        sinusoids :: (*, L=N) - a * cos(ωn + φ)
     """
 
-    # φ = initial_phase ? 0
-    initial_phase = initial_phase if (initial_phase is not None) else torch.ones_like(z)
+    ## Init : φ = phase ? 0
+    phase = phase if (phase is not None) else torch.zeros_like(freq)
 
-    # cumulative product :: (...) -> (..., N) - Convert z and φ to [φ, z, z, ..., z] to [φ, φ*z, φ*z*z, ..., φ*z^(N-1)]
-    z_series = torch.cat([initial_phase.unsqueeze(-1), z.unsqueeze(-1).expand(*z.shape, N-1)], dim=-1)
-    decaying_sinusoids = z_series.cumprod(dim=-1).real
+    # Reshape :: (*) -> (*, L=1)
+    freq, phase, amp = freq.unsqueeze(-1), phase.unsqueeze(-1), amp.unsqueeze(-1)
 
-    return decaying_sinusoids
+    # Direct sinusoids :: (*, L=1) * (L=L,) -> (*, L=L)
+    n = torch.arange(length, dtype=torch.float32, device=freq.device)
+    return amp * torch.cos(freq * n + phase)
+
+
+def complex_oscillator(z: torch.ComplexType, phase: Optional[torch.ComplexType] = None, length: int = 2048):
+    """Generates exponentially decaying sinusoids.
+
+    Args:
+        z :: (*) - Time-invariant complex numbers representing the decaying sinusoids
+        phase :: (*) - Initial phase components as complex numbers on unit circle (not argument)
+        length - Length of output sinusoid
+    Returns:
+        decaying_sinusoids :: (*, L=L) - Exponentially decaying sinusoids, Re(phase * z^n) = |z|^n * cos(n∠z + ∠phase)
+    """
+
+    # Init : φ = phase ? e^0j (==1)
+    phase = phase if (phase is not None) else torch.ones_like(z)
+
+    # Reshape :: (*) -> (*, L=1)
+    shape = z.shape
+    z, phase = z.unsqueeze(-1), phase.unsqueeze(-1)
+
+    # Cumulative product :: (*, L=1) -> (*, L=L) - Convert z and φ to [φ, z, z, ..., z] to [φ, φ*z, φ*z*z, ..., φ*z^(L-1)]
+    return torch.cat([phase, z.expand(*shape, length-1)], dim=-1).cumprod(dim=-1).real
 
 
 def estimate_amplitude(z, N, representation="fft"):
@@ -46,7 +61,7 @@ def estimate_amplitude(z, N, representation="fft"):
     """
 
     # Source signal
-    V = complex_oscillator(z, N=N).sum(dim=-2)
+    V = complex_oscillator(z, length=N).sum(dim=-2)
 
     # Target real oscillator with amplutide 1
     n = torch.arange(N, device=z.device)
