@@ -20,7 +20,7 @@ from sinusoidal_gradient_descent.core import (
 from .metrics import min_lap_cost
 
 
-def sample_equally_devided(low_high: Tuple[float], sample_idx: int, n_division: int):
+def sample_equally_devided(low_high: Tuple[float], sample_idx: int, n_division: int) -> float:
     """Sample a value from a equally devided range with index.
 
     If `lowest != highest` but `n_division == 1`, use lowest value as a output.
@@ -146,7 +146,7 @@ class SinusoidEvaluationDataset(torch.utils.data.Dataset):
         noise_stdev = amp / ((2 * snr_linear) ** 0.5)
         white_noise = torch.randn(self.signal_length) * noise_stdev
 
-        # Signal generation
+        # Signal generation :: (1,) * (L=N,) -> (L=N,)
         n = torch.arange(self.signal_length)
         y = white_noise + amp * torch.cos(2 * math.pi * freq * n + phase)
 
@@ -243,12 +243,18 @@ class MultiSinusoidEvaluationDataset(torch.utils.data.Dataset):
         noise_stdev = amp.sum() / ((2 * snr_linear) ** 0.5)
         noise_or_silent = torch.randn(self.signal_length) * noise_stdev if self.enable_noise else torch.zeros(self.signal_length)
 
-        # Signal generation
+        # Signal generation :: (K, L=1) * (L=N,) -> (K, L=N) -> (L=N,)
         n = torch.arange(self.signal_length)
-        ys = noise_or_silent + amp[..., None] * torch.cos(2 * math.pi * freq[..., None] * n[..., None, :] + self.initial_phase)
+        ys = noise_or_silent + amp.unsqueeze(-1) * torch.cos(2 * math.pi * freq.unsqueeze(-1) * n + self.initial_phase)
         y = ys.sum(dim=0)
 
         return dict(signal=y, freq=freq, amp=amp, snr=snr, noise_stdev=noise_stdev)
+
+
+def fill_batch(item, batch_size):
+    """Fill a batch with copy of the item."""
+    # (*) -> (1, *) -> (B, *)
+    return item.unsqueeze(0).repeat(batch_size, 1)
 
 
 def sample_initial_predictions(
@@ -257,7 +263,7 @@ def sample_initial_predictions(
     amp_range: Tuple[float],           # The range of possible amplitudes
     initial_phase: float,              # The initial phase of the sinusoids
     invert_sigmoid: bool = False,      # Whether to use `global_amp` as `logit(a_k)`, enabling [0, 1]-bounded a_k with `sigmoid(global_amp)`
-    batch_size: int = None,            # The batch size of initial predictions
+    batch_size: int = 0,               # The batch size of initial predictions
     all_random_in_batch: bool = False, # If true, all predictions in a batch will be sampled randomly. If false, one randomly sampled prediction will be repeated across the batch dimension.
     seed: int = 0,                     # The random seed
     device: str = "cpu",               # The device to place the initial predictions on
@@ -293,10 +299,8 @@ def sample_initial_predictions(
             amplitude = torch.special.logit(amplitude)
 
     if not all_random_in_batch:
-        # (K,) -> (1, K) -> (B, K)
-        spin      =      spin.unsqueeze(0).repeat(batch_size, 1)
-        amplitude = amplitude.unsqueeze(0).repeat(batch_size, 1)
-        phases    =    phases.unsqueeze(0).repeat(batch_size, 1)
+        # (K,) -> (B, K)
+        spin, amplitude, phase = fill_batch(spin, batch_size) ,fill_batch(amplitude, batch_size), fill_batch(phase, batch_size)
 
     return spin, amplitude, phase
 
