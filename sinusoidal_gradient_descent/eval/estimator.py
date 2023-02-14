@@ -400,7 +400,7 @@ def evaluation_loop(
             with torch.no_grad():
                 if step % log_interval == 0:
                     print(f"Step {step}: {loss.item()}")
-                    if not use_real_sinusoid_baseline:
+                    if not use_r:
                         # MinLapCost for multi, MSE for single
                         if mode == "multi":
                             freq_error = np.mean(min_lap_cost(abs_freq(z), target_freq.abs(), True))
