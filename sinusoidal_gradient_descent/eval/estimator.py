@@ -396,9 +396,9 @@ def evaluation_loop(
                     if not use_r:
                         # MinLapCost for multi, MSE for single
                         if mode == "multi":
-                            freq_error = np.mean(min_lap_cost(abs_freq(z), target_freq.abs(), True))
+                            freq_error = np.mean(min_lap_cost(abs_freq(spin), target_freq.abs(), True))
                         else:
-                            freq_error = F.mse_loss(abs_freq(z), target_freq.abs())
+                            freq_error = F.mse_loss(abs_freq(spin), target_freq.abs())
                         print(f"Freq error: {freq_error.tolist()}")
 
         # Evaluation: GroundTruth vs fitted Oscillator transferred from Surrogate
